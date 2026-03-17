@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Master Moulder Chat</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+
+<style>
+body{margin:0;font-family:Arial;background:#0b141a;color:white;}
+header{background:#202c33;padding:10px;text-align:center;}
+.container{padding:10px;}
+.chat{height:60vh;overflow-y:auto;background:#111;border-radius:10px;padding:10px;}
+.msg{background:#2a3942;margin:5px;padding:10px;border-radius:8px;}
+.me{background:#005c4b;}
+input{padding:10px;width:65%;}
+button{padding:10px;background:#00a884;color:white;border:none;}
+.users{background:#111;padding:10px;margin-bottom:10px;border-radius:10px;}
+img{max-width:200px;border-radius:10px;}
+</style>
+
+</head>
+
+<body>
+
+<header>🔥 Master Moulder Live Chat</header>
+
+<div class="container">
+
+<input id="username" placeholder="Enter your name">
+<button onclick="login()">Join</button>
+
+<div id="app" style="display:none">
+
+<div class="users" id="userList"></div>
+
+<div class="chat" id="messages"></div>
+
+<input id="message" placeholder="Type message">
+<button onclick="send()">Send</button>
+
+<br><br>
+
+<input type="file" id="file">
+<button onclick="upload()">Send Image</button>
+
+<br><br>
+
+<button onclick="record()">🎤 Voice Note</button>
+
+</div>
+
+</div>
+
+<script>
+
+const supabase = supabase.createClient("YOUR_URL","YOUR_KEY");
+
+let user="";
+let mediaRecorder;
+let audioChunks=[];
+
+// LOGIN
+async function login(){
+  user = username.value;
+
+  await supabase.from("users").insert({name:user});
+
+  app.style.display="block";
+
+  loadMessages();
+  loadUsers();
+}
+
+// SEND TEXT
+async function send(){
+  await supabase.from("messages").insert({
+    text: message.value,
+    user: user,
+    room: "global"
+  });
+  message.value="";
+}
+
+// LOAD LIVE MESSAGES
+function loadMessages(){
+
+  supabase.channel('chat')
+  .on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},payload=>{
+    displayMessage(payload.new);
+  })
+  .subscribe();
+
+  fetchMessages();
+}
+
+// FETCH OLD
+async function fetchMessages(){
+  const { data } = await supabase.from("messages").select("*");
+
+  messages.innerHTML="";
+  data.forEach(displayMessage);
+}
+
+// DISPLAY
+function displayMessage(msg){
+  const isMe = msg.user === user;
+  messages.innerHTML += `
+    <div class="msg ${isMe?'me':''}">
+      <b>${msg.user}</b><br>${msg.text}
+    </div>
+  `;
+}
+
+// USERS
+async function loadUsers(){
+  const { data } = await supabase.from("users").select("*");
+
+  userList.innerHTML = "<b>Online Users:</b><br>";
+  data.forEach(u=>{
+    userList.innerHTML += u.name+"<br>";
+  });
+}
+
+// IMAGE UPLOAD
+async function upload(){
+  const file = document.getElementById("file").files[0];
+
+  const { data, error } = await supabase.storage
+    .from("chat-files")
+    .upload("public/"+file.name, file);
+
+  const { data: urlData } = supabase.storage
+    .from("chat-files")
+    .getPublicUrl("public/"+file.name);
+
+  await supabase.from("messages").insert({
+    text: `<img src="${urlData.publicUrl}">`,
+    user: user,
+    room: "global"
+  });
+}
+
+// VOICE NOTE
+function record(){
+
+navigator.mediaDevices.getUserMedia({audio:true})
+.then(stream=>{
+  mediaRecorder = new MediaRecorder(stream);
+
+  mediaRecorder.start();
+
+  mediaRecorder.ondataavailable = e=>{
+    audioChunks.push(e.data);
+  };
+
+  mediaRecorder.onstop = async ()=>{
+    const blob = new Blob(audioChunks);
+    const file = new File([blob], "voice.webm");
+
+    const { data } = await supabase.storage
+      .from("chat-files")
+      .upload("voice/"+Date.now()+".webm", file);
+
+    const { data: urlData } = supabase.storage
+      .from("chat-files")
+      .getPublicUrl(data.path);
+
+    await supabase.from("messages").insert({
+      text: `<audio controls src="${urlData.publicUrl}"></audio>`,
+      user: user,
+      room: "global"
+    });
+
+    audioChunks=[];
+  };
+
+  setTimeout(()=>mediaRecorder.stop(),5000); // 5 sec voice
+});
+
+}
+
+</script>
+
+</body>
+</html>
